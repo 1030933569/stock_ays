@@ -1,0 +1,48 @@
+# Render部署配置文件
+# https://render.com/docs/yaml-spec
+
+services:
+  # Cron Job 1: 周线筛选 + ML排序（每周五收盘后运行）
+  - type: cron
+    name: stock-weekly-scan
+    env: python
+    schedule: "30 15 * * 5"  # 每周五 15:30 (UTC+8需要调整为 7:30 UTC)
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "cd stock_all && python run_full_scan.py --config config.yaml"
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: TZ
+        value: Asia/Shanghai
+
+  # Cron Job 2: 日线信号扫描（每个交易日收盘后运行）
+  - type: cron
+    name: stock-daily-scan
+    env: python
+    schedule: "30 15 * * 1-5"  # 周一到周五 15:30 (UTC+8需要调整为 7:30 UTC)
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "cd stock_all && python daily_scan.py --config config.yaml --watchlist ../output/watchlist.csv"
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: TZ
+        value: Asia/Shanghai
+
+  # Cron Job 3: 数据更新（每周日晚上更新K线数据）
+  - type: cron
+    name: stock-data-fetch
+    env: python
+    schedule: "0 20 * * 0"  # 每周日 20:00 (UTC+8需要调整为 12:00 UTC)
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "cd stock_all && python fetch_kline_history.py --output-dir ../kline_data --delay 0.05"
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: TZ
+        value: Asia/Shanghai
+
+# 注意：
+# 1. Render的Cron Jobs使用UTC时间，北京时间需要减8小时
+# 2. 如果需要持久化数据，建议使用Render的磁盘存储服务
+# 3. 免费版Cron Jobs有限制，可能需要升级到付费计划
+

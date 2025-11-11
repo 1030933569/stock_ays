@@ -1,0 +1,19 @@
+# 股票筛选系统依赖包
+pandas>=2.0.0
+numpy>=1.24.0
+scipy>=1.10.0
+PyYAML>=6.0
+tqdm>=4.65.0
+baostock>=0.8.8
+
+# ML相关依赖
+prophet>=1.1.4
+lightgbm>=4.0.0
+
+# 可选：数据可视化
+matplotlib>=3.7.0
+
+# Web应用和调度器（根据部署方式选择）
+flask>=3.0.0
+schedule>=1.2.0
+

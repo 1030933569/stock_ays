@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# 虚拟环境
+venv/
+ENV/
+env/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 数据文件（太大不要提交到git）
+kline_data/
+*.csv
+
+# 输出文件
+output/
+*.log
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 配置（如果包含敏感信息）
+# config.yaml
+
