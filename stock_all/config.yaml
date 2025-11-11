@@ -1,0 +1,138 @@
+# 股票筛选策略参数配置文件
+
+# ==================== 基础过滤参数 ====================
+pre_filter:
+  exclude_st: true                    # 排除ST股票
+  min_market_cap: 12000000000         # 最小流通市值（120亿元）
+  min_avg_amount_20d: 100000000       # 最小20日均成交额（1亿元）
+  min_listing_days: 365               # 最小上市天数（1年）
+  max_suspend_days_5d: 2              # 最近5日最大停牌天数
+
+# ==================== 月线大势判定参数 ====================
+monthly:
+  # 上升趋势判定（提高门槛，减少已涨太多的股票）
+  uptrend:
+    close_above_ma10: true            # 收盘价需高于10月均线
+    ma10_slope_min: 0.002              # 10月均线斜率>2%（排除已大涨的）
+    ma_alignment_check: true          # 检查MA5>MA10>MA20
+    macd_above_zero: false            # MACD需在0轴上方（可选）
+    gain_6m_min: 0.10                 # 6个月涨幅>10%（排除已涨太多）
+  
+  # 底部筑底判定（放宽条件，找更多筑底股）
+  base_building:
+    max_drawdown_24m: 0.50            # 24个月回撤≥20%即可（降低门槛）
+    consolidation_months_min: 6       # 横盘最少6个月
+    consolidation_months_max: 24      # 横盘最多24个月（允许更长时间筑底）
+    volatility_threshold: 0.20        # 横盘期波动率<20%（放宽）
+    ma10_slope_min: -0.02             # 斜率范围放宽
+    ma10_slope_max: 0.02              # 允许轻微上行
+    volume_cooperation: true          # 上涨月量能>下跌月量能
+    volume_ratio_min: 0.8             # 降低要求，允许量能比稍弱
+
+# ==================== 周线结构验证参数 ====================
+weekly:
+  # 必要条件（全部满足才通过）
+  mandatory:
+    close_above_ma40: true            # 收盘价需高于40周均线
+    ma40_slope_min: 0.0               # 40周均线最小斜率
+    close_above_ma10: true            # 收盘价需高于10周均线
+    pullback_not_break_ma20: true     # 回撤不破20周均线
+    macd_positive_or_golden: true     # MACD柱状>0或近期金叉
+    macd_lookback: 3                  # MACD金叉回看周期
+    volume_ratio_min: 1.2             # 上涨周/下跌周量能比
+    volume_lookback: 8                # 量能分析回看周数
+  
+  # 形态识别（影响评分，不强制）
+  pattern:
+    box_consolidation:
+      lookback_weeks_min: 6           # 箱体最少周数
+      lookback_weeks_max: 12          # 箱体最多周数
+      depth_min: 0.15                 # 箱体深度最小值（15%）
+      depth_max: 0.35                 # 箱体深度最大值（35%）
+    double_bottom:
+      enabled: true                   # 是否启用双底识别
+      tolerance: 0.05                 # 两个底点价差容忍度（5%）
+    vcp:
+      enabled: true                   # 是否启用VCP（波动收敛）识别
+      lookback_weeks: 12              # VCP回看周数
+
+# ==================== 日线触发检测参数 ====================
+daily:
+  # 突破型触发
+  breakout:
+    volume_ratio_min: 1.5             # 突破时量能比最小值（当前量/20日均量）
+    rsi_threshold: 60                 # RSI突破阈值
+    new_high_days: 20                 # 创N日新高
+  
+  # 回踩型触发
+  pullback:
+    ma_support: [10, 21]              # 支撑均线（10日或21日）
+    volume_shrink_ratio: 1.0          # 回踩时量能萎缩比率（<1.0）
+    recovery_volume_ratio: 1.0        # 收复时量能放大比率（>1.0）
+    max_drawback_pct: 0.08            # 5-10日最大回撤（8%）
+    lookback_days: 10                 # 回踩分析回看天数
+  
+  # 止损计算
+  stop_loss:
+    initial_pct: 0.08                 # 初始止损百分比（8%）
+    atr_multiplier: 2.0               # ATR倍数（entry - ATR*2）
+    use_structure_low: true           # 是否使用结构低点
+
+# ==================== 输出和报告参数 ====================
+output:
+  watchlist:
+    max_stocks: 200                   # 观察池最大股票数
+    min_weekly_score: 60              # 最低周线评分
+    sort_by: "weekly_score"           # 排序字段
+    include_industries: true          # 是否包含行业信息
+    max_per_industry: 5               # 每个行业最多选择数量
+    prefer_base_building: true        # 优先筛选底部筑底股票
+  
+  daily_signals:
+    max_signals: 20                   # 每日信号最大数量
+    sort_by: "strength_score"         # 排序字段
+    min_risk_reward: 3.0              # 最小风险收益比
+
+# ==================== 行业配置 ====================
+industry:
+  exclude: []                         # 排除的行业
+  prefer: []                          # 偏好的行业（空表示不限）
+  max_concentration: 0.3              # 单一行业最大占比（30%）
+
+# ==================== ML智能排序参数 ====================
+ml_ranking:
+  enabled: true                      # 是否启用ML排序（两阶段筛选）
+  
+  # Prophet预测配置
+  prophet:
+    enabled: true                    # 是否使用Prophet预测
+    forecast_periods: 3              # 预测未来N个月
+    changepoint_prior_scale: 0.05    # 趋势灵活性（0.001-0.5，越大越灵活）
+  
+  # LightGBM配置（可选，用于模型训练）
+  lightgbm:
+    objective: "regression"          # 目标函数
+    metric: "rmse"                   # 评估指标
+    boosting_type: "gbdt"            # 提升类型
+    num_leaves: 31                   # 叶子数
+    learning_rate: 0.05              # 学习率
+    n_estimators: 100                # 树的数量
+    feature_fraction: 0.8            # 特征采样比例
+    bagging_fraction: 0.8            # 样本采样比例
+    bagging_freq: 5                  # 采样频率
+  
+  # 输出配置
+  output:
+    top_n: 50                        # 最终输出前N只股票
+    min_score: 60                    # 最低ML评分阈值
+    save_scores: true                # 是否保存详细评分
+    save_features: false             # 是否保存特征矩阵（调试用）
+
+# ==================== 数据路径配置 ====================
+paths:
+  kline_data_dir: "./kline_data"      # K线数据目录
+  output_dir: "./output"              # 输出目录
+  watchlist_file: "watchlist.csv"     # 观察池文件名
+  daily_signals_file: "daily_signals.csv"  # 日线信号文件名
+  ranked_stocks_file: "ranked_stocks.csv"  # ML排序结果文件名
+
