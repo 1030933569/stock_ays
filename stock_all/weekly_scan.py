@@ -70,6 +70,9 @@ def load_kline_data(stock_code: str, data_dir: Path, freq: str) -> Optional[pd.D
     Returns:
         K线数据DataFrame或None
     """
+    # 确保stock_code是字符串类型
+    stock_code = str(stock_code)
+    
     freq_map = {
         'daily': '_daily_1y.csv',
         'weekly': '_weekly_5y.csv',

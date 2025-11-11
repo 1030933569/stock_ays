@@ -59,7 +59,7 @@ class MLRanker:
         self.feature_names = []
         self.use_prophet = config.get('ml_ranking', {}).get('use_prophet', True)
     
-    def rank_stocks(self, watchlist_df: pd.DataFrame, data_dir: Path) -> pd.DataFrame:
+    def rank_stocks(self, watchlist_df: pd.DataFrame, data_dir) -> pd.DataFrame:
         """
         对观察池股票进行排序
         
@@ -70,12 +70,16 @@ class MLRanker:
         Returns:
             排序后的DataFrame，增加了ML评分和预测
         """
+        # 确保data_dir是Path对象
+        if not isinstance(data_dir, Path):
+            data_dir = Path(str(data_dir))
+        
         results = []
         
         print(f"\n【ML排序】处理{len(watchlist_df)}只候选股票...")
         
         for idx, row in tqdm(watchlist_df.iterrows(), total=len(watchlist_df), desc="ML评分"):
-            stock_code = row['code']
+            stock_code = str(row['code'])  # 确保是字符串
             
             try:
                 # 加载月线数据
@@ -298,10 +302,17 @@ class MLRanker:
         
         return ', '.join(key_features) if key_features else '符合基本条件'
     
-    def _load_kline_data(self, stock_code: str, data_dir: Path, freq: str) -> pd.DataFrame | None:
+    def _load_kline_data(self, stock_code: str, data_dir, freq: str) -> pd.DataFrame | None:
         """
         加载K线数据
         """
+        # 确保data_dir是Path对象
+        if not isinstance(data_dir, Path):
+            data_dir = Path(data_dir)
+        
+        # 确保stock_code是字符串
+        stock_code = str(stock_code)
+        
         freq_map = {
             'daily': '_daily_1y.csv',
             'weekly': '_weekly_5y.csv',
