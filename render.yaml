@@ -8,14 +8,6 @@ services:
     env: python
     buildCommand: "pip install -r requirements.txt"
     startCommand: "python app.py"
-    healthCheckPath: /health
-    envVars:
-      - key: PYTHON_VERSION
-        value: 3.11.0
-      - key: TZ
-        value: Asia/Shanghai
-      - key: PORT
-        value: 10000
 
   # Cron Job 1: 周线筛选 + ML排序（每周五收盘后运行）
   - type: cron
