@@ -28,5 +28,5 @@ COPY . .
 RUN mkdir -p kline_data output
 
 # 默认命令（可以被覆盖）
-CMD ["python", "stock_all/run_full_scan.py", "--config", "stock_all/config.yaml"]
+CMD ["python", "app.py"]
 
