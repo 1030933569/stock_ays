@@ -3,7 +3,7 @@ Flask Web应用 - 用于Render Web Service部署
 提供Web界面和API接口手动触发任务
 """
 
-from flask import Flask, jsonify, render_template_string, request
+from flask import Flask, jsonify, render_template_string, request, send_file
 import subprocess
 import threading
 import os
@@ -20,6 +20,19 @@ task_status = {
     "data_fetch": {"status": "idle", "last_run": None, "message": ""},
 }
 
+# 日志目录
+LOG_DIR = Path("logs")
+LOG_DIR.mkdir(exist_ok=True)
+
+
+def _log_path_for(task_name: str) -> Path:
+    mapping = {
+        "weekly_scan": LOG_DIR / "weekly.log",
+        "daily_scan": LOG_DIR / "daily.log",
+        "data_fetch": LOG_DIR / "data_fetch.log",
+    }
+    return mapping.get(task_name, LOG_DIR / f"{task_name}.log")
+
 
 def run_task_background(task_name, command, description):
     """在后台运行任务"""
@@ -28,25 +41,55 @@ def run_task_background(task_name, command, description):
     task_status[task_name]["status"] = "running"
     task_status[task_name]["message"] = f"正在执行: {description}"
     
+    log_file_path = _log_path_for(task_name)
+
+    # 记录任务开始
     try:
-        result = subprocess.run(
-            command,
-            shell=True,
-            capture_output=True,
-            text=True,
-            timeout=3600
-        )
+        with open(log_file_path, "a", encoding="utf-8") as lf:
+            lf.write("\n" + "=" * 80 + "\n")
+            lf.write(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 开始执行：{description}\n")
+            lf.write("=" * 80 + "\n")
+    except Exception:
+        pass
+
+    try:
+        # 实时写入日志（同时输出到文件和控制台）
+        print(f"\n{'='*80}")
+        print(f"▶️  开始执行: {description}")
+        print(f"{'='*80}\n")
         
-        if result.returncode == 0:
+        with open(log_file_path, "a", encoding="utf-8") as lf:
+            process = subprocess.Popen(
+                command,
+                shell=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1
+            )
+            
+            # 同时输出到文件和控制台
+            for line in process.stdout:
+                lf.write(line)
+                lf.flush()
+                print(line, end='', flush=True)  # 输出到 Render 日志
+            
+            ret = process.wait(timeout=3600)
+
+        if ret == 0:
             task_status[task_name]["status"] = "success"
             task_status[task_name]["message"] = f"{description} 执行成功"
         else:
             task_status[task_name]["status"] = "failed"
-            task_status[task_name]["message"] = f"{description} 执行失败: {result.stderr[:200]}"
-            
+            task_status[task_name]["message"] = f"{description} 执行失败（返回码 {ret}）"
+
     except subprocess.TimeoutExpired:
         task_status[task_name]["status"] = "failed"
         task_status[task_name]["message"] = f"{description} 执行超时"
+        try:
+            process.kill()
+        except Exception:
+            pass
     except Exception as e:
         task_status[task_name]["status"] = "failed"
         task_status[task_name]["message"] = f"{description} 执行异常: {str(e)}"
@@ -167,6 +210,17 @@ HTML_TEMPLATE = """
             border-radius: 5px;
             min-height: 40px;
         }
+        .logs {
+            margin-top: 12px;
+            background: #0b1020;
+            color: #d6e2ff;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+            padding: 12px;
+            border-radius: 8px;
+            height: 200px;
+            overflow: auto;
+            white-space: pre-wrap;
+        }
         .footer {
             text-align: center;
             color: #999;
@@ -211,6 +265,8 @@ HTML_TEMPLATE = """
                         {% if tasks.weekly_scan.status == 'running' %}disabled{% endif %}>
                     ▶️ 立即执行
                 </button>
+                <div class="logs" id="log-weekly" style="display:none;"></div>
+                <button class="btn btn-primary" style="margin-top:8px" onclick="toggleLogs('weekly')">📜 查看/隐藏日志</button>
             </div>
             
             <!-- 日线扫描 -->
@@ -232,6 +288,8 @@ HTML_TEMPLATE = """
                         {% if tasks.daily_scan.status == 'running' %}disabled{% endif %}>
                     ▶️ 立即执行
                 </button>
+                <div class="logs" id="log-daily" style="display:none;"></div>
+                <button class="btn btn-primary" style="margin-top:8px" onclick="toggleLogs('daily')">📜 查看/隐藏日志</button>
             </div>
             
             <!-- 数据更新 -->
@@ -253,6 +311,8 @@ HTML_TEMPLATE = """
                         {% if tasks.data_fetch.status == 'running' %}disabled{% endif %}>
                     ▶️ 立即执行
                 </button>
+                <div class="logs" id="log-data" style="display:none;"></div>
+                <button class="btn btn-primary" style="margin-top:8px" onclick="toggleLogs('data')">📜 查看/隐藏日志</button>
             </div>
         </div>
         
@@ -268,11 +328,41 @@ HTML_TEMPLATE = """
                 .then(response => response.json())
                 .then(data => {
                     alert(data.message);
+                    // 展开日志并开始轮询
+                    toggleLogs(taskType, true);
+                    pollLogs(taskType);
                     setTimeout(() => location.reload(), 1000);
                 })
                 .catch(error => {
                     alert('执行失败: ' + error);
                 });
+        }
+
+        function toggleLogs(taskType, forceOpen=false) {
+            const el = document.getElementById('log-' + taskType);
+            if (forceOpen) {
+                el.style.display = 'block';
+                return;
+            }
+            el.style.display = (el.style.display === 'none' || el.style.display === '') ? 'block' : 'none';
+            if (el.style.display === 'block') {
+                pollLogs(taskType);
+            }
+        }
+
+        function pollLogs(taskType) {
+            fetch('/api/logs/' + taskType + '?_=' + Date.now())
+                .then(r => r.text())
+                .then(text => {
+                    const el = document.getElementById('log-' + taskType);
+                    if (!el) return;
+                    el.textContent = text || '(暂无输出)';
+                    el.scrollTop = el.scrollHeight;
+                    if (el.style.display === 'block') {
+                        setTimeout(() => pollLogs(taskType), 2000);
+                    }
+                })
+                .catch(() => {});
         }
     </script>
 </body>
@@ -356,10 +446,31 @@ def health():
     return jsonify({"status": "ok", "timestamp": datetime.now().isoformat()})
 
 
+@app.route('/api/logs/<task>')
+def get_logs(task: str):
+    """返回任务日志尾部"""
+    name_map = {"weekly": "weekly_scan", "daily": "daily_scan", "data": "data_fetch"}
+    task_key = name_map.get(task, task)
+    log_path = _log_path_for(task_key)
+    if not log_path.exists():
+        return "(暂无日志)"
+    try:
+        max_bytes = 20 * 1024
+        with open(log_path, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            size = f.tell()
+            f.seek(max(0, size - max_bytes), os.SEEK_SET)
+            content = f.read().decode("utf-8", errors="ignore")
+        return content
+    except Exception as e:
+        return f"(读取日志失败: {e})"
+
+
 if __name__ == '__main__':
     # 创建必要的目录
     Path("output").mkdir(exist_ok=True)
     Path("kline_data").mkdir(exist_ok=True)
+    LOG_DIR.mkdir(exist_ok=True)
     
     # 启动Flask应用
     port = int(os.environ.get("PORT", 10000))
