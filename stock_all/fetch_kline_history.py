@@ -61,12 +61,6 @@ def parse_args() -> argparse.Namespace:
         default=True,
         help="跳过已下载的股票，断点续传（默认: True）",
     )
-    parser.add_argument(
-        "--incremental",
-        action="store_true",
-        default=True,
-        help="增量更新模式：只下载新增数据并追加（默认: True）",
-    )
     return parser.parse_args()
 
 
@@ -133,29 +127,6 @@ def calculate_date_range(years: int) -> tuple[str, str]:
     end_date = datetime.today()
     start_date = end_date - timedelta(days=years * 365)
     return start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d")
-
-
-def get_last_date_from_csv(csv_path: Path) -> Optional[str]:
-    """
-    从CSV文件中获取最后一条数据的日期
-    
-    Args:
-        csv_path: CSV文件路径
-        
-    Returns:
-        最后日期（YYYY-MM-DD格式），失败返回None
-    """
-    try:
-        if not csv_path.exists():
-            return None
-        df = pd.read_csv(csv_path)
-        if len(df) == 0:
-            return None
-        # 假设第一列是日期列
-        last_date = df.iloc[-1, 0]
-        return str(last_date)
-    except:
-        return None
 
 
 def fetch_kline_data(
@@ -231,57 +202,29 @@ def fetch_kline_data(
 def save_kline_data(
     df: pd.DataFrame,
     output_path: Path,
-    encoding: str = "utf-8-sig",
-    append: bool = False
+    encoding: str = "utf-8-sig"
 ) -> None:
-    """
-    保存K线数据到CSV文件
-    
-    Args:
-        df: 数据DataFrame
-        output_path: 输出路径
-        encoding: 编码格式
-        append: 是否追加模式（True=追加新数据，False=覆盖整个文件）
-    """
+    """保存K线数据到CSV文件（覆盖模式）"""
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    
-    if append and output_path.exists():
-        # 追加模式：读取原数据，合并后去重
-        try:
-            existing_df = pd.read_csv(output_path, encoding=encoding)
-            # 合并数据
-            combined_df = pd.concat([existing_df, df], ignore_index=True)
-            # 按日期去重（保留最新的）
-            date_col = combined_df.columns[0]  # 假设第一列是日期
-            combined_df = combined_df.drop_duplicates(subset=[date_col], keep='last')
-            # 按日期排序
-            combined_df = combined_df.sort_values(by=date_col)
-            combined_df.to_csv(output_path, index=False, encoding=encoding)
-        except:
-            # 如果追加失败，则覆盖
-            df.to_csv(output_path, index=False, encoding=encoding)
-    else:
-        # 覆盖模式
-        df.to_csv(output_path, index=False, encoding=encoding)
+    df.to_csv(output_path, index=False, encoding=encoding)
 
 
-def is_stock_downloaded(code: str, output_dir: Path, check_freshness: bool = True) -> bool:
+def is_stock_downloaded(code: str, output_dir: Path) -> bool:
     """
-    检查股票数据是否已完整下载且数据新鲜
+    检查股票数据是否已完整下载
     
     Args:
         code: 股票代码（如 sh.600000）
         output_dir: 输出目录
-        check_freshness: 是否检查数据新鲜度（默认True，检查文件是否在7天内更新过）
         
     Returns:
-        True表示已下载且数据新鲜，False表示需要（重新）下载
+        True表示已下载，False表示需要下载
     """
     # 清理股票代码
     clean_code = code.replace("sh.", "").replace("sz.", "")
     stock_dir = output_dir / clean_code
     
-    # 检查3个文件是否都存在且不为空
+    # 检查3个文件是否都存在
     required_files = [
         stock_dir / f"{clean_code}_daily_1y.csv",
         stock_dir / f"{clean_code}_weekly_5y.csv",
@@ -291,26 +234,12 @@ def is_stock_downloaded(code: str, output_dir: Path, check_freshness: bool = Tru
     for file_path in required_files:
         if not file_path.exists():
             return False
-        # 检查文件是否为空（至少有表头）
+        # 简单检查文件大小
         try:
-            df = pd.read_csv(file_path)
-            if len(df) == 0:
+            if file_path.stat().st_size < 100:
                 return False
         except:
             return False
-        
-        # 检查数据新鲜度（如果启用）
-        if check_freshness:
-            try:
-                # 检查文件最后修改时间
-                file_mtime = datetime.fromtimestamp(file_path.stat().st_mtime)
-                days_old = (datetime.today() - file_mtime).days
-                
-                # 如果文件超过7天未更新，认为数据过期
-                if days_old > 7:
-                    return False
-            except:
-                return False
     
     return True
 
@@ -320,19 +249,10 @@ def process_stock(
     stock_name: str,
     output_dir: Path,
     encoding: str,
-    delay: float,
-    incremental: bool = True
+    delay: float
 ) -> dict:
     """
-    处理单只股票，获取其K线数据（支持增量更新）
-    
-    Args:
-        code: 股票代码
-        stock_name: 股票名称
-        output_dir: 输出目录
-        encoding: 文件编码
-        delay: 请求延迟
-        incremental: 是否增量更新（True=只下载新数据并追加，False=重新下载全部）
+    处理单只股票，获取其所有K线数据（完整下载模式）
     
     Returns:
         统计信息字典
@@ -347,69 +267,27 @@ def process_stock(
         stock_dir = output_dir / clean_code
         
         # 1. 获取日线数据（1年）
-        daily_file = stock_dir / f"{clean_code}_daily_1y.csv"
-        if incremental and daily_file.exists():
-            # 增量模式：从最后日期开始下载
-            last_date = get_last_date_from_csv(daily_file)
-            if last_date:
-                # 从最后日期的下一天开始
-                start_date = (datetime.strptime(last_date, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
-            else:
-                start_date, _ = calculate_date_range(1)
-            _, end_date = calculate_date_range(0)  # 到今天
-            daily_df = fetch_kline_data(code, start_date, end_date, frequency="d", max_retries=3)
-            if daily_df is not None and not daily_df.empty:
-                save_kline_data(daily_df, daily_file, encoding, append=True)
-                stats["daily"] = len(daily_df)
-        else:
-            # 完整模式：下载全部数据
-            start_date, end_date = calculate_date_range(1)
-            daily_df = fetch_kline_data(code, start_date, end_date, frequency="d", max_retries=3)
-            if daily_df is not None and not daily_df.empty:
-                save_kline_data(daily_df, daily_file, encoding, append=False)
-                stats["daily"] = len(daily_df)
+        start_date, end_date = calculate_date_range(1)
+        daily_df = fetch_kline_data(code, start_date, end_date, frequency="d", max_retries=3)
+        if daily_df is not None and not daily_df.empty:
+            save_kline_data(daily_df, stock_dir / f"{clean_code}_daily_1y.csv", encoding)
+            stats["daily"] = len(daily_df)
         time.sleep(delay)
         
         # 2. 获取周线数据（5年）
-        weekly_file = stock_dir / f"{clean_code}_weekly_5y.csv"
-        if incremental and weekly_file.exists():
-            last_date = get_last_date_from_csv(weekly_file)
-            if last_date:
-                start_date = (datetime.strptime(last_date, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
-            else:
-                start_date, _ = calculate_date_range(5)
-            _, end_date = calculate_date_range(0)
-            weekly_df = fetch_kline_data(code, start_date, end_date, frequency="w", max_retries=3)
-            if weekly_df is not None and not weekly_df.empty:
-                save_kline_data(weekly_df, weekly_file, encoding, append=True)
-                stats["weekly"] = len(weekly_df)
-        else:
-            start_date, end_date = calculate_date_range(5)
-            weekly_df = fetch_kline_data(code, start_date, end_date, frequency="w", max_retries=3)
-            if weekly_df is not None and not weekly_df.empty:
-                save_kline_data(weekly_df, weekly_file, encoding, append=False)
-                stats["weekly"] = len(weekly_df)
+        start_date, end_date = calculate_date_range(5)
+        weekly_df = fetch_kline_data(code, start_date, end_date, frequency="w", max_retries=3)
+        if weekly_df is not None and not weekly_df.empty:
+            save_kline_data(weekly_df, stock_dir / f"{clean_code}_weekly_5y.csv", encoding)
+            stats["weekly"] = len(weekly_df)
         time.sleep(delay)
         
         # 3. 获取月线数据（10年）
-        monthly_file = stock_dir / f"{clean_code}_monthly_10y.csv"
-        if incremental and monthly_file.exists():
-            last_date = get_last_date_from_csv(monthly_file)
-            if last_date:
-                start_date = (datetime.strptime(last_date, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
-            else:
-                start_date, _ = calculate_date_range(10)
-            _, end_date = calculate_date_range(0)
-            monthly_df = fetch_kline_data(code, start_date, end_date, frequency="m", max_retries=3)
-            if monthly_df is not None and not monthly_df.empty:
-                save_kline_data(monthly_df, monthly_file, encoding, append=True)
-                stats["monthly"] = len(monthly_df)
-        else:
-            start_date, end_date = calculate_date_range(10)
-            monthly_df = fetch_kline_data(code, start_date, end_date, frequency="m", max_retries=3)
-            if monthly_df is not None and not monthly_df.empty:
-                save_kline_data(monthly_df, monthly_file, encoding, append=False)
-                stats["monthly"] = len(monthly_df)
+        start_date, end_date = calculate_date_range(10)
+        monthly_df = fetch_kline_data(code, start_date, end_date, frequency="m", max_retries=3)
+        if monthly_df is not None and not monthly_df.empty:
+            save_kline_data(monthly_df, stock_dir / f"{clean_code}_monthly_10y.csv", encoding)
+            stats["monthly"] = len(monthly_df)
         time.sleep(delay)
         
     except Exception as e:
@@ -432,9 +310,7 @@ def main() -> int:
     print(f"输出目录: {output_dir}", flush=True)
     print(f"数据范围: 月线10年、周线5年、日线1年", flush=True)
     print(f"请求延迟: {args.delay}秒", flush=True)
-    print(f"更新模式: {'增量追加' if args.incremental else '完整下载'}", flush=True)
-    if args.incremental:
-        print("💡 将自动追加最新数据，快速高效！", flush=True)
+    print(f"断点续传: {'开启' if args.skip_existing else '关闭'}", flush=True)
     print("=" * 60, flush=True)
     
     try:
@@ -453,16 +329,12 @@ def main() -> int:
         stocks_to_download = []
         skipped_count = 0
         
-        if args.incremental:
-            # 增量模式：处理所有股票（快速追加新数据）
-            print("\n增量更新模式：将为所有股票追加最新数据", flush=True)
-            stocks_to_download = [row for idx, row in stock_list.iterrows()]
-        elif args.skip_existing:
+        if args.skip_existing:
             # 跳过模式：只处理缺失的股票
             print("\n检查已下载的股票...", flush=True)
             for idx, row in stock_list.iterrows():
                 code = row["code"]
-                if is_stock_downloaded(code, output_dir, check_freshness=False):
+                if is_stock_downloaded(code, output_dir):
                     skipped_count += 1
                 else:
                     stocks_to_download.append(row)
@@ -472,22 +344,21 @@ def main() -> int:
         else:
             stocks_to_download = [row for idx, row in stock_list.iterrows()]
         
-        if not stocks_to_download and not args.incremental:
-            print("\n所有股票数据已是最新，无需下载！", flush=True)
+        if not stocks_to_download:
+            print("\n所有股票数据已存在，无需下载！", flush=True)
             return 0
         
         # 串行处理（baostock不支持并发）
         all_stats = []
         failed_stocks = []
-        mode_desc = "增量追加模式" if args.incremental else "完整下载模式"
-        print(f"\n开始更新K线数据（{mode_desc}）...", flush=True)
+        print(f"\n开始下载K线数据（断点续传模式）...", flush=True)
         
         for row in tqdm(stocks_to_download, desc="下载进度"):
             code = row["code"]
             stock_name = row.get("code_name", "")
             
             try:
-                stats = process_stock(code, stock_name, output_dir, args.encoding, args.delay, args.incremental)
+                stats = process_stock(code, stock_name, output_dir, args.encoding, args.delay)
                 all_stats.append(stats)
                 
                 # 记录失败的股票

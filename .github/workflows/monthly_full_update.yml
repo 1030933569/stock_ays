@@ -1,23 +1,23 @@
-name: 📊 每周强制更新K线数据
+name: 📊 每月完整数据更新
 
 on:
-  # 定时任务：每周日晚上8点（北京时间）
+  # 定时任务：每月1号凌晨2点（北京时间10点 = UTC 2点）
   schedule:
-    - cron: '0 12 * * 0'  # 每周日 20:00 北京时间 = 12:00 UTC
+    - cron: '0 2 1 * *'
   
   # 也可以手动触发
   workflow_dispatch:
 
 jobs:
-  update-data:
+  full-update:
     runs-on: ubuntu-latest
-    timeout-minutes: 360  # 最长6小时
+    timeout-minutes: 480  # 最长8小时
     
     steps:
       - name: 📥 Checkout 代码
         uses: actions/checkout@v3
         with:
-          fetch-depth: 0  # 获取完整历史，方便提交
+          fetch-depth: 0
       
       - name: 🐍 设置 Python 环境
         uses: actions/setup-python@v4
@@ -30,27 +30,24 @@ jobs:
           pip install --upgrade pip
           pip install -r requirements.txt
       
-      - name: 🗑️ 清空旧数据
+      - name: 🗑️ 删除旧数据
         run: |
           echo "删除旧数据，准备重新下载..."
           rm -rf kline_data/*
           mkdir -p kline_data
       
-      - name: 📊 强制重新下载所有数据
+      - name: 📊 完整下载所有数据
         run: |
           cd stock_all
-          # 强制完整下载所有股票数据
           python fetch_kline_history.py --output-dir ../kline_data --delay 0.05
         continue-on-error: false
       
       - name: 📈 显示数据统计
         run: |
-          echo "=== 数据统计 ==="
+          echo "=== 完整更新统计 ==="
           if [ -f kline_data/fetch_statistics.csv ]; then
-            echo "统计文件已生成"
             head -20 kline_data/fetch_statistics.csv
           fi
-          echo ""
           echo "总文件数: $(find kline_data -name '*.csv' | wc -l)"
           echo "数据大小: $(du -sh kline_data)"
       
@@ -59,33 +56,22 @@ jobs:
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
           
-          # 添加所有更新的数据文件
           git add kline_data/
-          
-          # 检查是否有变更
-          if git diff --cached --quiet; then
-            echo "ℹ️  没有数据更新"
-          else
-            echo "📝 提交数据更新..."
-            git commit -m "🤖 自动更新K线数据 - $(date '+%Y-%m-%d %H:%M:%S')"
-            git push
-            echo "✅ 数据已推送到仓库！"
-          fi
+          git commit -m "🔄 每月完整数据更新 - $(date '+%Y-%m-%d')"
+          git push
+          echo "✅ 数据已推送到仓库！"
       
       - name: 📋 生成运行报告
         if: always()
         run: |
-          echo "## 📊 K线数据更新报告" >> $GITHUB_STEP_SUMMARY
+          echo "## 🔄 每月完整数据更新报告" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**更新时间**: $(date)" >> $GITHUB_STEP_SUMMARY
-          echo "**更新模式**: 每周强制完整更新" >> $GITHUB_STEP_SUMMARY
+          echo "**更新模式**: 完整重新下载所有数据" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
           if [ -f kline_data/fetch_statistics.csv ]; then
-            echo "**数据文件**: 已生成" >> $GITHUB_STEP_SUMMARY
             echo "**总文件数**: $(find kline_data -name '*.csv' | wc -l)" >> $GITHUB_STEP_SUMMARY
             echo "**数据大小**: $(du -sh kline_data | cut -f1)" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "⚠️ 未找到统计文件" >> $GITHUB_STEP_SUMMARY
           fi
 
