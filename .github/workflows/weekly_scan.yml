@@ -1,0 +1,87 @@
+name: 📈 周线筛选和ML排序
+
+on:
+  # 定时任务：每周五下午3:30（北京时间）
+  schedule:
+    - cron: '30 7 * * 5'  # 每周五 15:30 北京时间 = 7:30 UTC
+  
+  # 也可以手动触发
+  workflow_dispatch:
+
+jobs:
+  weekly-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    
+    steps:
+      - name: 📥 Checkout 代码
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 1
+      
+      - name: 🐍 设置 Python 环境
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      
+      - name: 📦 安装依赖
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+      
+      - name: 🔍 运行周线筛选
+        run: |
+          cd stock_all
+          python run_full_scan.py --config config.yaml
+        continue-on-error: false
+      
+      - name: 📊 显示结果统计
+        run: |
+          echo "=== 筛选结果 ==="
+          if [ -f output/watchlist.csv ]; then
+            echo "观察池股票数: $(tail -n +2 output/watchlist.csv | wc -l)"
+            echo ""
+            echo "前10只股票:"
+            head -11 output/watchlist.csv
+          fi
+          
+          if [ -f output/ranked_stocks.csv ]; then
+            echo ""
+            echo "ML排序股票数: $(tail -n +2 output/ranked_stocks.csv | wc -l)"
+          fi
+      
+      - name: 💾 提交结果到仓库
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          
+          git add output/
+          
+          if git diff --cached --quiet; then
+            echo "ℹ️  没有结果更新"
+          else
+            echo "📝 提交筛选结果..."
+            git commit -m "🤖 周线筛选结果 - $(date '+%Y-%m-%d %H:%M:%S')"
+            git push
+            echo "✅ 结果已推送到仓库！"
+          fi
+      
+      - name: 📋 生成运行报告
+        if: always()
+        run: |
+          echo "## 📈 周线筛选报告" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**运行时间**: $(date)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ -f output/watchlist.csv ]; then
+            WATCHLIST_COUNT=$(tail -n +2 output/watchlist.csv | wc -l)
+            echo "**观察池股票数**: $WATCHLIST_COUNT" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          if [ -f output/ranked_stocks.csv ]; then
+            RANKED_COUNT=$(tail -n +2 output/ranked_stocks.csv | wc -l)
+            echo "**ML排序股票数**: $RANKED_COUNT" >> $GITHUB_STEP_SUMMARY
+          fi
+

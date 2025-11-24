@@ -130,8 +130,8 @@ ml_ranking:
 
 # ==================== 数据路径配置 ====================
 paths:
-  kline_data_dir: "./kline_data"      # K线数据目录
-  output_dir: "./output"              # 输出目录
+  kline_data_dir: "../kline_data"     # K线数据目录（相对于stock_all目录）
+  output_dir: "../output"             # 输出目录（相对于stock_all目录）
   watchlist_file: "watchlist.csv"     # 观察池文件名
   daily_signals_file: "daily_signals.csv"  # 日线信号文件名
   ranked_stocks_file: "ranked_stocks.csv"  # ML排序结果文件名
