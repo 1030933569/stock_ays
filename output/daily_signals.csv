@@ -1,0 +1,3 @@
+﻿code,name,trigger_type,entry_price,stop_loss,risk_pct,volume_ratio,rsi,signal_strength,weekly_score,monthly_trend,support,resistance,date
+601888,sh.601888,BREAKOUT,86.89,80.63,7.2,2.32,79.6,2,120,BASE_BUILDING,68.17,86.89,2025-11-10
+688028,sh.688028,BREAKOUT,71.13,65.44,8.0,1.7,78.9,1,130,UPTREND,41.61,73.59,2025-11-10
