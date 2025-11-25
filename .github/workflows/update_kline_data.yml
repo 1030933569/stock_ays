@@ -1,17 +1,26 @@
 name: 📊 每周强制更新K线数据
 
 on:
-  # 定时任务：每周日晚上8点（北京时间）
+  # 定时任务：每周日分5批执行，间隔1小时
   schedule:
-    - cron: '0 12 * * 0'  # 每周日 20:00 北京时间 = 12:00 UTC
+    - cron: '0 12 * * 0'  # 第1批：20:00 北京时间
+    - cron: '0 13 * * 0'  # 第2批：21:00 北京时间
+    - cron: '0 14 * * 0'  # 第3批：22:00 北京时间
+    - cron: '0 15 * * 0'  # 第4批：23:00 北京时间
+    - cron: '0 16 * * 0'  # 第5批：00:00 北京时间（周一凌晨）
   
   # 也可以手动触发
   workflow_dispatch:
 
+# 确保同一时间只有一个任务运行，避免冲突
+concurrency:
+  group: kline-update
+  cancel-in-progress: false  # 不取消正在运行的任务，等待完成
+
 jobs:
   update-data:
     runs-on: ubuntu-latest
-    timeout-minutes: 360  # 最长6小时
+    timeout-minutes: 90  # 每批最长1.5小时
     
     steps:
       - name: 📥 Checkout 代码
@@ -30,17 +39,12 @@ jobs:
           pip install --upgrade pip
           pip install -r requirements.txt
       
-      - name: 🗑️ 清空旧数据
-        run: |
-          echo "删除旧数据，准备重新下载..."
-          rm -rf kline_data/*
-          mkdir -p kline_data
-      
-      - name: 📊 强制重新下载所有数据
+      - name: 📊 增量下载K线数据（断点续传）
         run: |
           cd stock_all
-          # 强制完整下载所有股票数据
-          python fetch_kline_history.py --output-dir ../kline_data --delay 0.05
+          # 使用断点续传，跳过已下载的股票
+          # 增加延迟到0.15秒，减少被限流风险
+          python fetch_kline_history.py --output-dir ../kline_data --delay 0.15 --skip-existing
         continue-on-error: false
       
       - name: 📈 显示数据统计
@@ -78,7 +82,7 @@ jobs:
           echo "## 📊 K线数据更新报告" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**更新时间**: $(date)" >> $GITHUB_STEP_SUMMARY
-          echo "**更新模式**: 每周强制完整更新" >> $GITHUB_STEP_SUMMARY
+          echo "**更新模式**: 分批断点续传（每周日5批，间隔1小时）" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
           if [ -f kline_data/fetch_statistics.csv ]; then
