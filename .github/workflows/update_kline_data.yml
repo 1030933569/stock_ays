@@ -59,7 +59,7 @@ jobs:
           cd stock_all
           # 使用断点续传，跳过已下载的股票
           # 延迟0.15秒，减少被限流风险
-          python fetch_kline_history.py --output-dir ../kline_data --delay 0.1 --skip-existing
+          python fetch_kline_history.py --output-dir ../kline_data --delay 0.2 --skip-existing
         continue-on-error: false
       
       - name: 📈 显示数据统计
