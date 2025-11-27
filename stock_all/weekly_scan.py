@@ -369,7 +369,33 @@ def check_weekly_structure(weekly_df: pd.DataFrame, config: dict) -> dict:
         if 50 < latest['RSI'] < 70:  # RSI在健康区间
             bonus_score += 5
     
-    # 更新总分（基础分+加分，最多145分，后面会归一化）
+    # 6. 连续放量加分（最多15分）
+    consecutive_vol_config = config['weekly']['mandatory'].get('consecutive_volume', {})
+    if consecutive_vol_config.get('enabled', False) and len(weekly_df) >= 8:
+        min_weeks = consecutive_vol_config.get('min_weeks', 2)
+        vol_increase_ratio = consecutive_vol_config.get('volume_increase_ratio', 1.2)
+        max_bonus = consecutive_vol_config.get('max_bonus', 15)
+        
+        # 计算连续放量周数
+        recent_weeks = weekly_df.tail(8)
+        avg_volume_4w = recent_weeks.head(4)['volume'].mean()  # 前4周均量作为基准
+        
+        consecutive_count = 0
+        for i in range(4, len(recent_weeks)):  # 检查最近4周
+            week_volume = recent_weeks.iloc[i]['volume']
+            if week_volume > avg_volume_4w * vol_increase_ratio:
+                consecutive_count += 1
+            else:
+                consecutive_count = 0  # 中断则重置
+        
+        # 根据连续放量周数加分
+        if consecutive_count >= min_weeks:
+            # 连续2周+5分，3周+10分，4周+15分
+            vol_bonus = min((consecutive_count - min_weeks + 1) * 5, max_bonus)
+            bonus_score += vol_bonus
+            result['details']['consecutive_volume_weeks'] = consecutive_count
+    
+    # 更新总分（基础分+加分，最多160分，后面会归一化）
     result['score'] = mandatory_score + bonus_score
     
     # 归一化到0-100（可选，保持兼容）
