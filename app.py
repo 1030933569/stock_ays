@@ -25,7 +25,12 @@ def load_csv(filename: str) -> pd.DataFrame:
     if not file_path.exists():
         return pd.DataFrame()
     try:
-        return pd.read_csv(file_path)
+        # 将 code 列作为字符串读取，避免前导零丢失
+        df = pd.read_csv(file_path, dtype={'code': str})
+        # 确保股票代码是6位，补零
+        if 'code' in df.columns:
+            df['code'] = df['code'].apply(lambda x: str(x).zfill(6) if pd.notna(x) else x)
+        return df
     except Exception:
         return pd.DataFrame()
 
