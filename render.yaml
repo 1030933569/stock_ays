@@ -1,29 +1,15 @@
-# Render部署配置文件（简化版 - 使用 GitHub Actions 管理定时任务）
-# https://render.com/docs/yaml-spec
+# Render Blueprint 配置
+# 用于一键部署到 Render
 
 services:
-  # Web Service: 仅提供Web界面，查看结果
   - type: web
-    name: stock-web-app
+    name: stock-api
     env: python
-    buildCommand: "pip install -r requirements.txt"
-    startCommand: "python app.py"
+    region: singapore  # 新加坡区域，国内访问快
+    plan: free
+    buildCommand: pip install -r api/requirements.txt
+    startCommand: cd api && uvicorn app:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.0
-      - key: TZ
-        value: Asia/Shanghai
-
-# 说明：
-# ✅ 完全免费方案
-# ✅ 数据存储：GitHub 仓库
-# ✅ 定时任务：GitHub Actions（见 .github/workflows/）
-#    - update_kline_data.yml: 每周日更新K线数据
-#    - weekly_scan.yml: 每周五筛选股票
-#    - daily_scan.yml: 每日扫描信号
-# ✅ Web界面：Render（查看结果、手动触发任务）
-# 
-# 优势：
-# - 不需要付费的持久化存储
-# - GitHub Actions 自动更新数据
-# - Render 只负责展示，资源占用少

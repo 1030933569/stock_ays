@@ -1,370 +1,554 @@
 """
-Flask Web应用 - 用于Render Web Service部署
-提供Web界面和API接口手动触发任务
+股票筛选系统 - API 服务
+- 提供数据 API 供其他应用调用
+- 提供简洁的状态查看界面
+- 数据更新由 GitHub Actions 自动完成
 """
 
-from flask import Flask, jsonify, render_template_string, request, send_file
-import subprocess
-import threading
+from flask import Flask, jsonify, render_template_string, request
+from flask_cors import CORS
 import os
 from datetime import datetime
 from pathlib import Path
-import json
+import pandas as pd
 
 app = Flask(__name__)
+CORS(app)  # 允许跨域
 
-# 任务状态存储
-task_status = {
-    "weekly_scan": {"status": "idle", "last_run": None, "message": ""},
-    "daily_scan": {"status": "idle", "last_run": None, "message": ""},
-    "data_fetch": {"status": "idle", "last_run": None, "message": ""},
-}
-
-# 日志目录
-LOG_DIR = Path("logs")
-LOG_DIR.mkdir(exist_ok=True)
+# 输出目录
+OUTPUT_DIR = Path("output")
 
 
-def _log_path_for(task_name: str) -> Path:
-    mapping = {
-        "weekly_scan": LOG_DIR / "weekly.log",
-        "daily_scan": LOG_DIR / "daily.log",
-        "data_fetch": LOG_DIR / "data_fetch.log",
-    }
-    return mapping.get(task_name, LOG_DIR / f"{task_name}.log")
-
-
-def run_task_background(task_name, command, description):
-    """在后台运行任务"""
-    global task_status
-    
-    task_status[task_name]["status"] = "running"
-    task_status[task_name]["message"] = f"正在执行: {description}"
-    
-    log_file_path = _log_path_for(task_name)
-
-    # 记录任务开始
+def load_csv(filename: str) -> pd.DataFrame:
+    """加载 CSV 文件"""
+    file_path = OUTPUT_DIR / filename
+    if not file_path.exists():
+        return pd.DataFrame()
     try:
-        with open(log_file_path, "a", encoding="utf-8") as lf:
-            lf.write("\n" + "=" * 80 + "\n")
-            lf.write(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 开始执行：{description}\n")
-            lf.write("=" * 80 + "\n")
+        return pd.read_csv(file_path)
     except Exception:
-        pass
-
-    try:
-        # 实时写入日志（同时输出到文件和控制台）
-        print(f"\n{'='*80}")
-        print(f"▶️  开始执行: {description}")
-        print(f"{'='*80}\n")
-        
-        with open(log_file_path, "a", encoding="utf-8") as lf:
-            process = subprocess.Popen(
-                command,
-                shell=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1
-            )
-            
-            # 同时输出到文件和控制台
-            for line in process.stdout:
-                lf.write(line)
-                lf.flush()
-                print(line, end='', flush=True)  # 输出到 Render 日志
-            
-            ret = process.wait(timeout=3600)
-
-        if ret == 0:
-            task_status[task_name]["status"] = "success"
-            task_status[task_name]["message"] = f"{description} 执行成功"
-        else:
-            task_status[task_name]["status"] = "failed"
-            task_status[task_name]["message"] = f"{description} 执行失败（返回码 {ret}）"
-
-    except subprocess.TimeoutExpired:
-        task_status[task_name]["status"] = "failed"
-        task_status[task_name]["message"] = f"{description} 执行超时"
-        try:
-            process.kill()
-        except Exception:
-            pass
-    except Exception as e:
-        task_status[task_name]["status"] = "failed"
-        task_status[task_name]["message"] = f"{description} 执行异常: {str(e)}"
-    
-    task_status[task_name]["last_run"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        return pd.DataFrame()
 
 
-# HTML模板
+def get_file_update_time(filename: str) -> str:
+    """获取文件更新时间"""
+    file_path = OUTPUT_DIR / filename
+    if file_path.exists():
+        mtime = os.path.getmtime(file_path)
+        return datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S")
+    return "无数据"
+
+
+# ==================== Web 界面 ====================
+
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>股票筛选系统</title>
+    <title>QuantScope | 智能选股系统</title>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet">
     <style>
+        :root {
+            --bg-primary: #0a0e17;
+            --bg-secondary: #111827;
+            --bg-card: #1a2234;
+            --border: #2d3748;
+            --text-primary: #f0f4f8;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
+            --accent-green: #10b981;
+            --accent-red: #ef4444;
+            --accent-blue: #3b82f6;
+            --accent-purple: #8b5cf6;
+            --accent-yellow: #f59e0b;
+            --accent-cyan: #06b6d4;
+        }
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { 
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        body {
+            font-family: 'Noto Sans SC', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
             min-height: 100vh;
-            padding: 20px;
-        }
-        .container {
-            max-width: 1000px;
-            margin: 0 auto;
-            background: white;
-            border-radius: 20px;
-            padding: 40px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-        }
-        h1 {
-            color: #333;
-            text-align: center;
-            margin-bottom: 10px;
-            font-size: 2.5em;
-        }
-        .subtitle {
-            text-align: center;
-            color: #666;
-            margin-bottom: 40px;
-            font-size: 1.1em;
-        }
-        .task-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-            gap: 20px;
-            margin-bottom: 30px;
-        }
-        .task-card {
-            border: 2px solid #e0e0e0;
-            border-radius: 15px;
-            padding: 25px;
-            transition: all 0.3s;
-        }
-        .task-card:hover {
-            transform: translateY(-5px);
-            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
-        }
-        .task-title {
-            font-size: 1.5em;
-            font-weight: bold;
-            color: #333;
-            margin-bottom: 10px;
-        }
-        .task-desc {
-            color: #666;
-            margin-bottom: 15px;
             line-height: 1.6;
         }
-        .task-status {
-            display: inline-block;
-            padding: 5px 15px;
-            border-radius: 20px;
-            font-size: 0.9em;
-            margin-bottom: 15px;
-            font-weight: 500;
+        /* Header */
+        .header {
+            background: var(--bg-secondary);
+            border-bottom: 1px solid var(--border);
+            padding: 16px 32px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: sticky;
+            top: 0;
+            z-index: 100;
         }
-        .status-idle { background: #e0e0e0; color: #666; }
-        .status-running { background: #ffd54f; color: #f57f17; animation: pulse 1.5s infinite; }
-        .status-success { background: #81c784; color: #2e7d32; }
-        .status-failed { background: #e57373; color: #c62828; }
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .logo-icon {
+            width: 40px;
+            height: 40px;
+            background: linear-gradient(135deg, var(--accent-blue) 0%, var(--accent-purple) 100%);
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+        }
+        .logo-text {
+            font-size: 1.5em;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--accent-blue) 0%, var(--accent-cyan) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .header-status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: var(--text-secondary);
+            font-size: 0.9em;
+        }
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            background: var(--accent-green);
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
         @keyframes pulse {
             0%, 100% { opacity: 1; }
-            50% { opacity: 0.6; }
+            50% { opacity: 0.5; }
         }
-        .btn {
-            width: 100%;
-            padding: 12px;
-            border: none;
-            border-radius: 8px;
+        /* Main Content */
+        .main {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 24px;
+        }
+        /* Stats Row */
+        .stats-row {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+        .stat-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 20px;
+            position: relative;
+            overflow: hidden;
+        }
+        .stat-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+        }
+        .stat-card.blue::before { background: var(--accent-blue); }
+        .stat-card.green::before { background: var(--accent-green); }
+        .stat-card.purple::before { background: var(--accent-purple); }
+        .stat-card.yellow::before { background: var(--accent-yellow); }
+        .stat-label {
+            font-size: 0.85em;
+            color: var(--text-muted);
+            margin-bottom: 8px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .stat-value {
+            font-size: 2em;
+            font-weight: 700;
+            color: var(--text-primary);
+        }
+        .stat-sub {
+            font-size: 0.8em;
+            color: var(--text-secondary);
+            margin-top: 4px;
+        }
+        /* Grid Layout */
+        .grid-2 {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 24px;
+            margin-bottom: 24px;
+        }
+        .grid-3 {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 24px;
+        }
+        /* Cards */
+        .card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            overflow: hidden;
+        }
+        .card-header {
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .card-title {
             font-size: 1em;
-            cursor: pointer;
-            transition: all 0.3s;
             font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 8px;
         }
-        .btn-primary {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        .card-badge {
+            font-size: 0.75em;
+            padding: 2px 8px;
+            border-radius: 4px;
+            background: var(--accent-blue);
             color: white;
         }
-        .btn-primary:hover { transform: scale(1.05); }
-        .btn-primary:disabled {
-            background: #ccc;
-            cursor: not-allowed;
-            transform: none;
+        .card-body { padding: 0; }
+        /* Table */
+        .table {
+            width: 100%;
+            border-collapse: collapse;
         }
-        .last-run {
+        .table th, .table td {
+            padding: 12px 16px;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+        }
+        .table th {
+            font-size: 0.75em;
+            font-weight: 500;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            background: rgba(0,0,0,0.2);
+        }
+        .table tr:hover { background: rgba(255,255,255,0.02); }
+        .table tr:last-child td { border-bottom: none; }
+        .code {
+            font-family: 'JetBrains Mono', monospace;
+            color: var(--accent-cyan);
+            font-weight: 500;
+        }
+        .tag {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 0.75em;
+            font-weight: 500;
+        }
+        .tag-green { background: rgba(16,185,129,0.15); color: var(--accent-green); }
+        .tag-blue { background: rgba(59,130,246,0.15); color: var(--accent-blue); }
+        .tag-yellow { background: rgba(245,158,11,0.15); color: var(--accent-yellow); }
+        .tag-purple { background: rgba(139,92,246,0.15); color: var(--accent-purple); }
+        .score {
+            font-family: 'JetBrains Mono', monospace;
+            font-weight: 600;
+        }
+        .score-high { color: var(--accent-green); }
+        .score-mid { color: var(--accent-yellow); }
+        .price { color: var(--accent-cyan); }
+        /* API Section */
+        .api-card { margin-top: 24px; }
+        .api-endpoint {
+            display: flex;
+            align-items: center;
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--border);
+            transition: background 0.2s;
+        }
+        .api-endpoint:hover { background: rgba(255,255,255,0.02); }
+        .api-endpoint:last-child { border-bottom: none; }
+        .api-method {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.7em;
+            font-weight: 600;
+            padding: 4px 8px;
+            border-radius: 4px;
+            background: var(--accent-green);
+            color: white;
+            margin-right: 12px;
+            min-width: 50px;
+            text-align: center;
+        }
+        .api-path {
+            font-family: 'JetBrains Mono', monospace;
+            color: var(--text-primary);
+            flex: 1;
+        }
+        .api-desc {
+            color: var(--text-muted);
             font-size: 0.85em;
-            color: #999;
-            margin-top: 10px;
         }
-        .message {
-            font-size: 0.9em;
-            color: #555;
-            margin-top: 10px;
-            padding: 10px;
-            background: #f5f5f5;
-            border-radius: 5px;
-            min-height: 40px;
-        }
-        .logs {
-            margin-top: 12px;
-            background: #0b1020;
-            color: #d6e2ff;
-            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-            padding: 12px;
-            border-radius: 8px;
-            height: 200px;
-            overflow: auto;
-            white-space: pre-wrap;
-        }
+        /* Footer */
         .footer {
             text-align: center;
-            color: #999;
-            margin-top: 40px;
-            padding-top: 20px;
-            border-top: 1px solid #e0e0e0;
+            padding: 24px;
+            color: var(--text-muted);
+            font-size: 0.85em;
+            border-top: 1px solid var(--border);
+            margin-top: 24px;
         }
-        .refresh-btn {
+        /* Trend Distribution */
+        .trend-bar {
+            display: flex;
+            height: 8px;
+            border-radius: 4px;
+            overflow: hidden;
+            margin-top: 12px;
+        }
+        .trend-up { background: var(--accent-green); }
+        .trend-base { background: var(--accent-blue); }
+        .trend-legend {
+            display: flex;
+            gap: 16px;
+            margin-top: 8px;
+            font-size: 0.8em;
+        }
+        .trend-legend-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            color: var(--text-secondary);
+        }
+        .trend-legend-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 2px;
+        }
+        /* Empty State */
+        .empty {
+            padding: 40px;
             text-align: center;
-            margin-bottom: 30px;
+            color: var(--text-muted);
+        }
+        /* Responsive */
+        @media (max-width: 1024px) {
+            .stats-row { grid-template-columns: repeat(2, 1fr); }
+            .grid-2, .grid-3 { grid-template-columns: 1fr; }
+        }
+        @media (max-width: 640px) {
+            .stats-row { grid-template-columns: 1fr; }
+            .header { padding: 12px 16px; }
+            .main { padding: 16px; }
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <h1>📈 股票筛选系统</h1>
-        <div class="subtitle">智能选股 · 把握机会</div>
-        
-        <div class="refresh-btn">
-            <button class="btn btn-primary" onclick="location.reload()" style="width: auto; padding: 10px 30px;">
-                🔄 刷新状态
-            </button>
+    <header class="header">
+        <div class="logo">
+            <div class="logo-icon">📊</div>
+            <span class="logo-text">QuantScope</span>
         </div>
-        
-        <div class="task-grid">
-            <!-- 周线筛选 -->
-            <div class="task-card">
-                <div class="task-title">📊 周线筛选</div>
-                <div class="task-desc">
-                    执行月线大势判定和周线结构验证，<br>
-                    从5000只股票中筛选出200只候选股，<br>
-                    并通过ML算法精选出50只最优股
-                </div>
-                <div class="task-status status-{{ tasks.weekly_scan.status }}">
-                    状态: {{ tasks.weekly_scan.status }}
-                </div>
-                <div class="message">{{ tasks.weekly_scan.message or '等待执行' }}</div>
-                {% if tasks.weekly_scan.last_run %}
-                <div class="last-run">上次运行: {{ tasks.weekly_scan.last_run }}</div>
-                {% endif %}
-                <button class="btn btn-primary" onclick="runTask('weekly')" 
-                        {% if tasks.weekly_scan.status == 'running' %}disabled{% endif %}>
-                    ▶️ 立即执行
-                </button>
-                <div class="logs" id="log-weekly" style="display:none;"></div>
-                <button class="btn btn-primary" style="margin-top:8px" onclick="toggleLogs('weekly')">📜 查看/隐藏日志</button>
-            </div>
-            
-            <!-- 日线扫描 -->
-            <div class="task-card">
-                <div class="task-title">🎯 日线扫描</div>
-                <div class="task-desc">
-                    基于观察池检测日线买入信号，<br>
-                    识别突破型和回踩型触发点，<br>
-                    计算入场价和止损价
-                </div>
-                <div class="task-status status-{{ tasks.daily_scan.status }}">
-                    状态: {{ tasks.daily_scan.status }}
-                </div>
-                <div class="message">{{ tasks.daily_scan.message or '等待执行' }}</div>
-                {% if tasks.daily_scan.last_run %}
-                <div class="last-run">上次运行: {{ tasks.daily_scan.last_run }}</div>
-                {% endif %}
-                <button class="btn btn-primary" onclick="runTask('daily')"
-                        {% if tasks.daily_scan.status == 'running' %}disabled{% endif %}>
-                    ▶️ 立即执行
-                </button>
-                <div class="logs" id="log-daily" style="display:none;"></div>
-                <button class="btn btn-primary" style="margin-top:8px" onclick="toggleLogs('daily')">📜 查看/隐藏日志</button>
-            </div>
-            
-            <!-- 数据更新 -->
-            <div class="task-card">
-                <div class="task-title">📥 数据更新</div>
-                <div class="task-desc">
-                    从baostock获取最新K线数据，<br>
-                    包括日线、周线、月线，<br>
-                    首次运行需要3-6小时
-                </div>
-                <div class="task-status status-{{ tasks.data_fetch.status }}">
-                    状态: {{ tasks.data_fetch.status }}
-                </div>
-                <div class="message">{{ tasks.data_fetch.message or '等待执行' }}</div>
-                {% if tasks.data_fetch.last_run %}
-                <div class="last-run">上次运行: {{ tasks.data_fetch.last_run }}</div>
-                {% endif %}
-                <button class="btn btn-primary" onclick="runTask('data')"
-                        {% if tasks.data_fetch.status == 'running' %}disabled{% endif %}>
-                    ▶️ 立即执行
-                </button>
-                <div class="logs" id="log-data" style="display:none;"></div>
-                <button class="btn btn-primary" style="margin-top:8px" onclick="toggleLogs('data')">📜 查看/隐藏日志</button>
-            </div>
+        <div class="header-status">
+            <span class="status-dot"></span>
+            <span>系统运行中 · 数据自动更新</span>
         </div>
-        
-        <div class="footer">
-            ⚠️ 免责声明: 本系统仅供学习研究使用，不构成投资建议<br>
-            股市有风险，投资需谨慎
-        </div>
-    </div>
+    </header>
     
-    <script>
-        function runTask(taskType) {
-            fetch('/api/run/' + taskType, { method: 'POST' })
-                .then(response => response.json())
-                .then(data => {
-                    alert(data.message);
-                    // 展开日志并开始轮询
-                    toggleLogs(taskType, true);
-                    pollLogs(taskType);
-                    setTimeout(() => location.reload(), 1000);
-                })
-                .catch(error => {
-                    alert('执行失败: ' + error);
-                });
-        }
-
-        function toggleLogs(taskType, forceOpen=false) {
-            const el = document.getElementById('log-' + taskType);
-            if (forceOpen) {
-                el.style.display = 'block';
-                return;
-            }
-            el.style.display = (el.style.display === 'none' || el.style.display === '') ? 'block' : 'none';
-            if (el.style.display === 'block') {
-                pollLogs(taskType);
-            }
-        }
-
-        function pollLogs(taskType) {
-            fetch('/api/logs/' + taskType + '?_=' + Date.now())
-                .then(r => r.text())
-                .then(text => {
-                    const el = document.getElementById('log-' + taskType);
-                    if (!el) return;
-                    el.textContent = text || '(暂无输出)';
-                    el.scrollTop = el.scrollHeight;
-                    if (el.style.display === 'block') {
-                        setTimeout(() => pollLogs(taskType), 2000);
-                    }
-                })
-                .catch(() => {});
-        }
-    </script>
+    <main class="main">
+        <!-- Stats Overview -->
+        <div class="stats-row">
+            <div class="stat-card blue">
+                <div class="stat-label">观察池</div>
+                <div class="stat-value">{{ watchlist_count }}</div>
+                <div class="stat-sub">周线筛选候选股</div>
+            </div>
+            <div class="stat-card green">
+                <div class="stat-label">今日信号</div>
+                <div class="stat-value">{{ signals_count }}</div>
+                <div class="stat-sub">日线触发买点</div>
+            </div>
+            <div class="stat-card purple">
+                <div class="stat-label">ML精选</div>
+                <div class="stat-value">{{ ranked_count }}</div>
+                <div class="stat-sub">智能排序Top股</div>
+            </div>
+            <div class="stat-card yellow">
+                <div class="stat-label">上升趋势</div>
+                <div class="stat-value">{{ trend_dist.get('UPTREND', 0) }}</div>
+                <div class="stat-sub">月线多头排列</div>
+            </div>
+        </div>
+        
+        <!-- Trend Distribution -->
+        <div class="card" style="margin-bottom: 24px;">
+            <div class="card-header">
+                <span class="card-title">📈 趋势分布</span>
+                <span style="color: var(--text-muted); font-size: 0.85em;">更新: {{ watchlist_time }}</span>
+            </div>
+            <div style="padding: 16px 20px;">
+                {% set total = trend_dist.get('UPTREND', 0) + trend_dist.get('BASE_BUILDING', 0) %}
+                {% if total > 0 %}
+                {% set up_pct = (trend_dist.get('UPTREND', 0) / total * 100)|round|int %}
+                <div class="trend-bar">
+                    <div class="trend-up" style="width: {{ up_pct }}%"></div>
+                    <div class="trend-base" style="width: {{ 100 - up_pct }}%"></div>
+                </div>
+                <div class="trend-legend">
+                    <div class="trend-legend-item">
+                        <div class="trend-legend-dot trend-up"></div>
+                        <span>上升趋势 {{ trend_dist.get('UPTREND', 0) }} ({{ up_pct }}%)</span>
+                    </div>
+                    <div class="trend-legend-item">
+                        <div class="trend-legend-dot trend-base"></div>
+                        <span>底部筑底 {{ trend_dist.get('BASE_BUILDING', 0) }} ({{ 100 - up_pct }}%)</span>
+                    </div>
+                </div>
+                {% else %}
+                <div class="empty">暂无数据</div>
+                {% endif %}
+            </div>
+        </div>
+        
+        <!-- Main Grid -->
+        <div class="grid-2">
+            <!-- Daily Signals -->
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">🎯 日线信号</span>
+                    <span class="card-badge">{{ signals_count }} 只</span>
+                </div>
+                <div class="card-body">
+                    {% if signals %}
+                    <table class="table">
+                        <thead>
+                            <tr>
+                                <th>代码</th>
+                                <th>类型</th>
+                                <th>入场价</th>
+                                <th>止损价</th>
+                                <th>风险</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for s in signals[:8] %}
+                            <tr>
+                                <td><span class="code">{{ s.code }}</span></td>
+                                <td>
+                                    {% if s.trigger_type == 'BREAKOUT' %}
+                                    <span class="tag tag-green">突破</span>
+                                    {% else %}
+                                    <span class="tag tag-blue">回踩</span>
+                                    {% endif %}
+                                </td>
+                                <td><span class="price">¥{{ "%.2f"|format(s.entry_price) }}</span></td>
+                                <td>¥{{ "%.2f"|format(s.stop_loss) }}</td>
+                                <td><span class="tag tag-yellow">{{ s.risk_pct }}%</span></td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                    {% else %}
+                    <div class="empty">今日暂无触发信号</div>
+                    {% endif %}
+                </div>
+            </div>
+            
+            <!-- ML Ranked -->
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">🏆 ML精选 Top10</span>
+                    <span class="card-badge">{{ ranked_count }} 只</span>
+                </div>
+                <div class="card-body">
+                    {% if ranked %}
+                    <table class="table">
+                        <thead>
+                            <tr>
+                                <th>代码</th>
+                                <th>ML评分</th>
+                                <th>趋势</th>
+                                <th>预测</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for r in ranked[:10] %}
+                            <tr>
+                                <td><span class="code">{{ r.code }}</span></td>
+                                <td>
+                                    <span class="score {% if r.ml_score >= 75 %}score-high{% else %}score-mid{% endif %}">
+                                        {{ r.ml_score }}
+                                    </span>
+                                </td>
+                                <td>
+                                    {% if r.monthly_trend == 'UPTREND' %}
+                                    <span class="tag tag-green">上升</span>
+                                    {% else %}
+                                    <span class="tag tag-blue">筑底</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if r.prophet_forecast_return is defined and r.prophet_forecast_return > 0 %}
+                                    <span style="color: var(--accent-green);">+{{ "%.1f"|format(r.prophet_forecast_return) }}%</span>
+                                    {% elif r.prophet_forecast_return is defined %}
+                                    <span style="color: var(--accent-red);">{{ "%.1f"|format(r.prophet_forecast_return) }}%</span>
+                                    {% else %}
+                                    <span style="color: var(--text-muted);">-</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                    {% else %}
+                    <div class="empty">暂无ML排序数据</div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        
+        <!-- API Documentation -->
+        <div class="card api-card">
+            <div class="card-header">
+                <span class="card-title">🔗 API 接口</span>
+                <span style="color: var(--text-muted); font-size: 0.85em;">RESTful · JSON</span>
+            </div>
+            <div class="card-body">
+                <div class="api-endpoint">
+                    <span class="api-method">GET</span>
+                    <span class="api-path">/api/watchlist</span>
+                    <span class="api-desc">观察池数据 · ?limit=N&trend=UPTREND&min_score=N</span>
+                </div>
+                <div class="api-endpoint">
+                    <span class="api-method">GET</span>
+                    <span class="api-path">/api/signals</span>
+                    <span class="api-desc">日线触发信号 · ?trigger_type=BREAKOUT</span>
+                </div>
+                <div class="api-endpoint">
+                    <span class="api-method">GET</span>
+                    <span class="api-path">/api/ranked</span>
+                    <span class="api-desc">ML精选排序 · ?limit=N&min_ml_score=N</span>
+                </div>
+                <div class="api-endpoint">
+                    <span class="api-method">GET</span>
+                    <span class="api-path">/api/stock/{code}</span>
+                    <span class="api-desc">查询单只股票详情</span>
+                </div>
+                <div class="api-endpoint">
+                    <span class="api-method">GET</span>
+                    <span class="api-path">/api/summary</span>
+                    <span class="api-desc">数据摘要统计</span>
+                </div>
+            </div>
+        </div>
+    </main>
+    
+    <footer class="footer">
+        <p>⚠️ 免责声明：本系统仅供学习研究使用，不构成投资建议 · 股市有风险，投资需谨慎</p>
+        <p style="margin-top: 8px; color: var(--text-muted);">Powered by QuantScope · Data updated by GitHub Actions</p>
+    </footer>
 </body>
 </html>
 """
@@ -372,73 +556,31 @@ HTML_TEMPLATE = """
 
 @app.route('/')
 def index():
-    """主页"""
-    return render_template_string(HTML_TEMPLATE, tasks=task_status)
-
-
-@app.route('/api/status')
-def get_status():
-    """获取所有任务状态"""
-    return jsonify(task_status)
-
-
-@app.route('/api/run/weekly', methods=['POST'])
-def run_weekly():
-    """运行周线筛选"""
-    if task_status["weekly_scan"]["status"] == "running":
-        return jsonify({"success": False, "message": "周线筛选正在运行中"})
+    """主页 - 数据概览"""
+    watchlist = load_csv("watchlist.csv")
+    signals = load_csv("daily_signals.csv")
+    ranked = load_csv("ranked_stocks.csv")
     
-    cmd = "cd stock_all && python run_full_scan.py --config config.yaml"
-    thread = threading.Thread(
-        target=run_task_background,
-        args=("weekly_scan", cmd, "周线筛选和ML排序")
+    # 趋势分布
+    trend_dist = {}
+    if not watchlist.empty and 'monthly_trend' in watchlist.columns:
+        trend_dist = watchlist['monthly_trend'].value_counts().to_dict()
+    
+    return render_template_string(
+        HTML_TEMPLATE,
+        watchlist_count=len(watchlist),
+        watchlist_time=get_file_update_time("watchlist.csv"),
+        signals_count=len(signals),
+        signals_time=get_file_update_time("daily_signals.csv"),
+        signals=signals.to_dict('records') if not signals.empty else [],
+        ranked_count=len(ranked),
+        ranked_time=get_file_update_time("ranked_stocks.csv"),
+        ranked=ranked.to_dict('records') if not ranked.empty else [],
+        trend_dist=trend_dist
     )
-    thread.daemon = True
-    thread.start()
-    
-    return jsonify({"success": True, "message": "周线筛选已启动"})
 
 
-@app.route('/api/run/daily', methods=['POST'])
-def run_daily():
-    """运行日线扫描"""
-    if task_status["daily_scan"]["status"] == "running":
-        return jsonify({"success": False, "message": "日线扫描正在运行中"})
-    
-    # 检查观察池
-    if not Path("output/watchlist.csv").exists():
-        return jsonify({
-            "success": False,
-            "message": "观察池文件不存在，请先运行周线筛选"
-        })
-    
-    cmd = "cd stock_all && python daily_scan.py --config config.yaml --watchlist ../output/watchlist.csv"
-    thread = threading.Thread(
-        target=run_task_background,
-        args=("daily_scan", cmd, "日线信号扫描")
-    )
-    thread.daemon = True
-    thread.start()
-    
-    return jsonify({"success": True, "message": "日线扫描已启动"})
-
-
-@app.route('/api/run/data', methods=['POST'])
-def run_data_fetch():
-    """运行数据更新"""
-    if task_status["data_fetch"]["status"] == "running":
-        return jsonify({"success": False, "message": "数据更新正在运行中"})
-    
-    cmd = "cd stock_all && python fetch_kline_history.py --output-dir ../kline_data --delay 0.05"
-    thread = threading.Thread(
-        target=run_task_background,
-        args=("data_fetch", cmd, "K线数据更新")
-    )
-    thread.daemon = True
-    thread.start()
-    
-    return jsonify({"success": True, "message": "数据更新已启动（需要3-6小时）"})
-
+# ==================== 数据 API ====================
 
 @app.route('/health')
 def health():
@@ -446,33 +588,154 @@ def health():
     return jsonify({"status": "ok", "timestamp": datetime.now().isoformat()})
 
 
-@app.route('/api/logs/<task>')
-def get_logs(task: str):
-    """返回任务日志尾部"""
-    name_map = {"weekly": "weekly_scan", "daily": "daily_scan", "data": "data_fetch"}
-    task_key = name_map.get(task, task)
-    log_path = _log_path_for(task_key)
-    if not log_path.exists():
-        return "(暂无日志)"
-    try:
-        max_bytes = 20 * 1024
-        with open(log_path, "rb") as f:
-            f.seek(0, os.SEEK_END)
-            size = f.tell()
-            f.seek(max(0, size - max_bytes), os.SEEK_SET)
-            content = f.read().decode("utf-8", errors="ignore")
-        return content
-    except Exception as e:
-        return f"(读取日志失败: {e})"
+@app.route('/api/watchlist')
+def api_watchlist():
+    """
+    获取观察池数据
+    参数: limit, trend (UPTREND/BASE_BUILDING), min_score
+    """
+    df = load_csv("watchlist.csv")
+    
+    if df.empty:
+        return jsonify({"count": 0, "data": [], "error": "数据不存在"})
+    
+    # 筛选
+    trend = request.args.get('trend')
+    min_score = request.args.get('min_score', type=int)
+    limit = request.args.get('limit', type=int)
+    
+    if trend and 'monthly_trend' in df.columns:
+        df = df[df['monthly_trend'] == trend]
+    
+    if min_score and 'weekly_score' in df.columns:
+        df = df[df['weekly_score'] >= min_score]
+    
+    if limit:
+        df = df.head(limit)
+    
+    return jsonify({
+        "count": len(df),
+        "data": df.to_dict('records'),
+        "updated_at": get_file_update_time("watchlist.csv")
+    })
 
+
+@app.route('/api/signals')
+def api_signals():
+    """
+    获取日线触发信号
+    参数: limit, trigger_type (BREAKOUT/PULLBACK)
+    """
+    df = load_csv("daily_signals.csv")
+    
+    if df.empty:
+        return jsonify({"count": 0, "data": [], "message": "今日无触发信号"})
+    
+    trigger_type = request.args.get('trigger_type')
+    limit = request.args.get('limit', type=int)
+    
+    if trigger_type and 'trigger_type' in df.columns:
+        df = df[df['trigger_type'] == trigger_type]
+    
+    if limit:
+        df = df.head(limit)
+    
+    return jsonify({
+        "count": len(df),
+        "data": df.to_dict('records'),
+        "updated_at": get_file_update_time("daily_signals.csv")
+    })
+
+
+@app.route('/api/ranked')
+def api_ranked():
+    """
+    获取 ML 排序精选股
+    参数: limit, min_ml_score
+    """
+    df = load_csv("ranked_stocks.csv")
+    
+    if df.empty:
+        return jsonify({"count": 0, "data": [], "error": "数据不存在"})
+    
+    min_ml_score = request.args.get('min_ml_score', type=float)
+    limit = request.args.get('limit', type=int)
+    
+    if min_ml_score and 'ml_score' in df.columns:
+        df = df[df['ml_score'] >= min_ml_score]
+    
+    if limit:
+        df = df.head(limit)
+    
+    return jsonify({
+        "count": len(df),
+        "data": df.to_dict('records'),
+        "updated_at": get_file_update_time("ranked_stocks.csv")
+    })
+
+
+@app.route('/api/stock/<code>')
+def api_stock(code: str):
+    """查询单只股票信息"""
+    result = {"code": code}
+    
+    watchlist = load_csv("watchlist.csv")
+    if not watchlist.empty and 'code' in watchlist.columns:
+        match = watchlist[watchlist['code'].astype(str) == str(code)]
+        if not match.empty:
+            result['watchlist'] = match.iloc[0].to_dict()
+    
+    signals = load_csv("daily_signals.csv")
+    if not signals.empty and 'code' in signals.columns:
+        match = signals[signals['code'].astype(str) == str(code)]
+        if not match.empty:
+            result['signal'] = match.iloc[0].to_dict()
+    
+    ranked = load_csv("ranked_stocks.csv")
+    if not ranked.empty and 'code' in ranked.columns:
+        match = ranked[ranked['code'].astype(str) == str(code)]
+        if not match.empty:
+            result['ranked'] = match.iloc[0].to_dict()
+    
+    if len(result) == 1:
+        return jsonify({"error": f"未找到股票 {code}"}), 404
+    
+    return jsonify(result)
+
+
+@app.route('/api/summary')
+def api_summary():
+    """获取数据摘要"""
+    watchlist = load_csv("watchlist.csv")
+    signals = load_csv("daily_signals.csv")
+    ranked = load_csv("ranked_stocks.csv")
+    
+    summary = {
+        "watchlist": {
+            "count": len(watchlist),
+            "updated_at": get_file_update_time("watchlist.csv"),
+        },
+        "signals": {
+            "count": len(signals),
+            "updated_at": get_file_update_time("daily_signals.csv"),
+            "data": signals.to_dict('records') if not signals.empty else []
+        },
+        "ranked": {
+            "count": len(ranked),
+            "updated_at": get_file_update_time("ranked_stocks.csv"),
+            "top_5": ranked.head(5).to_dict('records') if not ranked.empty else []
+        }
+    }
+    
+    if not watchlist.empty and 'monthly_trend' in watchlist.columns:
+        summary['watchlist']['trend_distribution'] = watchlist['monthly_trend'].value_counts().to_dict()
+    
+    return jsonify(summary)
+
+
+# ==================== 启动 ====================
 
 if __name__ == '__main__':
-    # 创建必要的目录
-    Path("output").mkdir(exist_ok=True)
-    Path("kline_data").mkdir(exist_ok=True)
-    LOG_DIR.mkdir(exist_ok=True)
-    
-    # 启动Flask应用
+    OUTPUT_DIR.mkdir(exist_ok=True)
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port, debug=False)
-
