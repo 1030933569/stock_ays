@@ -30,10 +30,16 @@ jobs:
           pip install --upgrade pip
           pip install -r requirements.txt
       
-      - name: 🔍 运行周线筛选
+      - name: 🔍 阶段1：规则筛选 (5000→200)
         run: |
           cd stock_all
-          python run_full_scan.py --config config.yaml
+          python weekly_scan.py --config config.yaml
+        continue-on-error: false
+      
+      - name: 🤖 阶段2：ML精筛 (200→50)
+        run: |
+          cd stock_all
+          python run_full_scan.py --config config.yaml --skip-rules
         continue-on-error: false
       
       - name: 📊 显示结果统计
