@@ -373,6 +373,15 @@ def main() -> int:
         stats_path = output_dir / "fetch_statistics.csv"
         stats_df.to_csv(stats_path, index=False, encoding=args.encoding)
         
+        # 保存股票名称映射表（供 API 使用）
+        stock_names_df = pd.DataFrame(stock_list)[['code', 'code_name']]
+        stock_names_df.columns = ['code', 'name']
+        # 提取纯代码（去掉 sh./sz. 前缀）
+        stock_names_df['code'] = stock_names_df['code'].str.replace(r'^(sh|sz)\.', '', regex=True)
+        stock_names_path = output_dir / "stock_names.csv"
+        stock_names_df.to_csv(stock_names_path, index=False, encoding=args.encoding)
+        print(f"股票名称映射已保存到: {stock_names_path}", flush=True)
+        
         # 打印汇总信息
         print("\n" + "=" * 60, flush=True)
         print("数据获取完成！", flush=True)

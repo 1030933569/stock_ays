@@ -15,8 +15,31 @@ import pandas as pd
 app = Flask(__name__)
 CORS(app)  # 允许跨域
 
-# 输出目录
+# 目录配置
 OUTPUT_DIR = Path("output")
+KLINE_DIR = Path("kline_data")
+
+# 股票名称缓存
+_stock_names_cache = None
+
+
+def load_stock_names() -> dict:
+    """加载股票名称映射表"""
+    global _stock_names_cache
+    if _stock_names_cache is not None:
+        return _stock_names_cache
+    
+    names_file = KLINE_DIR / "stock_names.csv"
+    if not names_file.exists():
+        return {}
+    
+    try:
+        df = pd.read_csv(names_file, dtype={'code': str})
+        df['code'] = df['code'].apply(lambda x: str(x).zfill(6))
+        _stock_names_cache = dict(zip(df['code'], df['name']))
+        return _stock_names_cache
+    except Exception:
+        return {}
 
 
 def load_csv(filename: str) -> pd.DataFrame:
@@ -30,6 +53,10 @@ def load_csv(filename: str) -> pd.DataFrame:
         # 确保股票代码是6位，补零
         if 'code' in df.columns:
             df['code'] = df['code'].apply(lambda x: str(x).zfill(6) if pd.notna(x) else x)
+            # 合并股票名称
+            stock_names = load_stock_names()
+            if stock_names:
+                df['name'] = df['code'].map(stock_names).fillna(df.get('name', ''))
         return df
     except Exception:
         return pd.DataFrame()
@@ -431,9 +458,9 @@ HTML_TEMPLATE = """
                         <thead>
                             <tr>
                                 <th>代码</th>
+                                <th>名称</th>
                                 <th>类型</th>
                                 <th>入场价</th>
-                                <th>止损价</th>
                                 <th>风险</th>
                             </tr>
                         </thead>
@@ -441,6 +468,7 @@ HTML_TEMPLATE = """
                             {% for s in signals[:8] %}
                             <tr>
                                 <td><span class="code">{{ s.code }}</span></td>
+                                <td style="max-width:80px;overflow:hidden;text-overflow:ellipsis;">{{ s.name or '-' }}</td>
                                 <td>
                                     {% if s.trigger_type == 'BREAKOUT' %}
                                     <span class="tag tag-green">突破</span>
@@ -449,7 +477,6 @@ HTML_TEMPLATE = """
                                     {% endif %}
                                 </td>
                                 <td><span class="price">¥{{ "%.2f"|format(s.entry_price) }}</span></td>
-                                <td>¥{{ "%.2f"|format(s.stop_loss) }}</td>
                                 <td><span class="tag tag-yellow">{{ s.risk_pct }}%</span></td>
                             </tr>
                             {% endfor %}
@@ -473,7 +500,8 @@ HTML_TEMPLATE = """
                         <thead>
                             <tr>
                                 <th>代码</th>
-                                <th>ML评分</th>
+                                <th>名称</th>
+                                <th>评分</th>
                                 <th>趋势</th>
                                 <th>预测</th>
                             </tr>
@@ -482,6 +510,7 @@ HTML_TEMPLATE = """
                             {% for r in ranked[:10] %}
                             <tr>
                                 <td><span class="code">{{ r.code }}</span></td>
+                                <td style="max-width:80px;overflow:hidden;text-overflow:ellipsis;">{{ r.name or '-' }}</td>
                                 <td>
                                     <span class="score {% if r.ml_score >= 75 %}score-high{% else %}score-mid{% endif %}">
                                         {{ r.ml_score }}
