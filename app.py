@@ -29,7 +29,8 @@ def load_stock_names() -> dict:
     if _stock_names_cache is not None:
         return _stock_names_cache
     
-    names_file = KLINE_DIR / "stock_names.csv"
+    # 从output目录读取（不会被GitHub Actions删除）
+    names_file = OUTPUT_DIR / "stock_names.csv"
     if not names_file.exists():
         return {}
     

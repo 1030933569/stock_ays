@@ -404,6 +404,39 @@ def check_weekly_structure(weekly_df: pd.DataFrame, config: dict) -> dict:
     return result
 
 
+def load_stock_name(stock_code: str, data_dir: Path) -> str:
+    """
+    从stock_names.csv加载股票中文名称
+    
+    Args:
+        stock_code: 股票代码（如 600000）
+        data_dir: K线数据目录
+        
+    Returns:
+        股票中文名称，如果未找到则返回代码
+    """
+    # 从output目录读取（不会被GitHub Actions删除）
+    output_dir = data_dir.parent / "output"
+    stock_names_file = output_dir / "stock_names.csv"
+    if not stock_names_file.exists():
+        return stock_code
+    
+    try:
+        import pandas as pd
+        names_df = pd.read_csv(stock_names_file, dtype={'code': str})
+        # 确保代码是6位，补零
+        names_df['code'] = names_df['code'].apply(lambda x: str(x).zfill(6))
+        
+        # 查找股票名称
+        match = names_df[names_df['code'] == str(stock_code).zfill(6)]
+        if not match.empty:
+            return match.iloc[0]['name']
+    except Exception:
+        pass
+    
+    return stock_code
+
+
 def process_single_stock(stock_code: str, data_dir: Path, config: dict) -> Optional[dict]:
     """
     处理单只股票
@@ -438,10 +471,13 @@ def process_single_stock(stock_code: str, data_dir: Path, config: dict) -> Optio
     latest_daily = daily_df.iloc[-1]
     latest_weekly = weekly_df.iloc[-1]
     
-    # 6. 构建结果
+    # 6. 加载股票中文名称
+    stock_name = load_stock_name(stock_code, data_dir)
+    
+    # 7. 构建结果
     result = {
         'code': stock_code,
-        'name': latest_daily.get('code', stock_code),
+        'name': stock_name,
         'monthly_trend': monthly_trend,
         'weekly_score': weekly_result['score'],
         'current_price': float(latest_daily['close']),

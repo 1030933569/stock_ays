@@ -44,8 +44,8 @@ def main():
         # 去掉 sh./sz. 前缀
         result['code'] = result['code'].str.replace(r'^(sh|sz)\.', '', regex=True)
         
-        # 保存到 kline_data 目录
-        output_dir = Path(__file__).parent.parent / "kline_data"
+        # 保存到 output 目录（不会被GitHub Actions删除）
+        output_dir = Path(__file__).parent.parent / "output"
         output_dir.mkdir(exist_ok=True)
         output_file = output_dir / "stock_names.csv"
         
