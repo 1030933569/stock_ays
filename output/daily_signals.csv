@@ -1,4 +1,1 @@
-﻿code,name,trigger_type,entry_price,stop_loss,risk_pct,volume_ratio,rsi,signal_strength,weekly_score,monthly_trend,support,resistance,date
-605255,sh.605255,BREAKOUT,147.0,135.24,8.0,1.57,83.4,1,135,UPTREND,83.36,154.4,2025-11-27
-603008,sh.603008,BREAKOUT,20.98,19.44,7.35,1.79,74.0,1,125,BASE_BUILDING,16.75,21.1,2025-11-27
-600343,sh.600343,BREAKOUT,21.79,20.05,8.0,4.53,85.8,1,125,UPTREND,14.98,23.96,2025-11-26
+﻿code,name,trigger_type,entry_price,stop_loss,risk_pct,signal_strength
