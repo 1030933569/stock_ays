@@ -1,4 +1,4 @@
 ﻿code,name,trigger_type,entry_price,stop_loss,risk_pct,volume_ratio,rsi,signal_strength,weekly_score,monthly_trend,support,resistance,date
 600989,宝丰能源,PULLBACK,18.5,17.56,5.1,1.04,0.0,2,110,UPTREND,17.71,20.27,2025-12-01
-603931,格林达,BREAKOUT,36.39,33.48,8.0,2.14,65.2,1,130,UPTREND,28.5,37.64,2025-12-01
-603216,梦天家居,BREAKOUT,30.6,28.15,8.0,,91.2,1,105,UPTREND,15.42,31.28,2025-12-01
+603216,梦天家居,BREAKOUT,33.66,30.97,8.0,,92.4,2,105,UPTREND,15.42,33.66,2025-12-02
+603931,格林达,BREAKOUT,35.75,32.89,8.0,1.57,66.5,1,130,UPTREND,28.5,37.64,2025-12-02
