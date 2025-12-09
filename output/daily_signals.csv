@@ -1,1 +1,2 @@
-﻿code,name,trigger_type,entry_price,stop_loss,risk_pct,signal_strength
+﻿code,name,trigger_type,entry_price,stop_loss,risk_pct,volume_ratio,rsi,signal_strength,weekly_score,monthly_trend,support,resistance,date
+603122,合富中国,BREAKOUT,29.18,26.85,8.0,,61.7,2,145,UPTREND,16.99,29.18,2025-12-08
