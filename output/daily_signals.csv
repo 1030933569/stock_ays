@@ -1,1 +1,3 @@
-﻿code,name,trigger_type,entry_price,stop_loss,risk_pct,signal_strength
+﻿code,name,trigger_type,entry_price,stop_loss,risk_pct,volume_ratio,rsi,signal_strength,weekly_score,monthly_trend,support,resistance,date
+688102,斯瑞新材,BREAKOUT,36.9,33.95,8.0,1.64,81.3,1,140,UPTREND,20.2,38.75,2025-12-15
+688031,星环科技,BREAKOUT,88.01,80.97,8.0,2.5,69.3,1,135,UPTREND,61.56,90.06,2025-12-15
