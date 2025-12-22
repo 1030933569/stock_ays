@@ -1,2 +1,1 @@
-﻿code,name,trigger_type,entry_price,stop_loss,risk_pct,volume_ratio,rsi,signal_strength,weekly_score,monthly_trend,support,resistance,date
-301133,金钟股份,BREAKOUT,37.2,34.22,8.0,2.82,68.1,1,130,UPTREND,27.0,39.37,2025-12-18
+﻿code,name,trigger_type,entry_price,stop_loss,risk_pct,signal_strength
