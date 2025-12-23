@@ -1,0 +1,93 @@
+name: 📊 K线数据增量更新（数据库）
+
+on:
+  # 定时任务：分批运行，每批间隔50分钟，每批最长45分钟
+  schedule:
+    - cron: '0 10 * * 1-5'   # 第1批：18:00 北京时间
+    - cron: '50 10 * * 1-5'  # 第2批：18:50
+    - cron: '40 11 * * 1-5'  # 第3批：19:40
+    - cron: '30 12 * * 1-5'  # 第4批：20:30
+    - cron: '20 13 * * 1-5'  # 第5批：21:20
+    - cron: '10 14 * * 1-5'  # 第6批：22:10
+    - cron: '0 15 * * 1-5'   # 第7批：23:00
+    - cron: '50 15 * * 1-5'  # 第8批：23:50
+    - cron: '40 16 * * 1-5'  # 第9批：00:40
+    - cron: '30 17 * * 1-5'  # 第10批：01:30
+  
+  # 也可以手动触发
+  workflow_dispatch:
+
+# 确保同一时间只有一个任务运行，避免冲突
+concurrency:
+  group: kline-db-update
+  cancel-in-progress: false  # 不取消正在运行的任务，等待完成
+
+jobs:
+  update-kline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45  # 每批最长45分钟
+    
+    # 数据库环境变量（从 GitHub Secrets 读取）
+    env:
+      DB_HOST: ${{ secrets.DB_HOST }}
+      DB_PORT: ${{ secrets.DB_PORT }}
+      DB_USER: ${{ secrets.DB_USER }}
+      DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+      DB_NAME: ${{ secrets.DB_NAME }}
+      DB_SSL: ${{ secrets.DB_SSL }}
+    
+    steps:
+      - name: 📥 Checkout 代码
+        uses: actions/checkout@v3
+      
+      - name: 🐍 设置 Python 环境
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      
+      - name: 📦 安装依赖
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pymysql
+      
+      - name: 📂 下载断点进度
+        uses: actions/cache@v3
+        with:
+          path: update_progress.txt
+          key: kline-db-progress-${{ github.run_id }}
+          restore-keys: |
+            kline-db-progress-
+      
+      - name: 🔗 测试数据库连接
+        run: python db_config.py
+      
+      - name: 🗄️ 初始化数据库表
+        run: python db_init.py
+      
+      - name: 📊 增量更新K线数据（断点续传）
+        run: python fetch_kline_incremental.py
+        continue-on-error: true  # 即使超时也继续保存进度
+      
+      - name: 💾 保存断点进度
+        if: always()
+        uses: actions/cache/save@v3
+        with:
+          path: update_progress.txt
+          key: kline-db-progress-${{ github.run_id }}
+      
+      - name: 📋 生成运行报告
+        if: always()
+        run: |
+          echo "## 📊 K线数据增量更新报告" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**更新时间**: $(date)" >> $GITHUB_STEP_SUMMARY
+          echo "**更新模式**: 增量更新（断点续传）" >> $GITHUB_STEP_SUMMARY
+          echo "**数据存储**: TiDB Cloud 数据库" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ -f update_progress.txt ]; then
+            echo "**已完成股票数**: $(wc -l < update_progress.txt)" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "**已完成股票数**: 0（首次运行）" >> $GITHUB_STEP_SUMMARY
+          fi

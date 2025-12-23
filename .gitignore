@@ -35,4 +35,8 @@ env/
 
 # 配置（如果包含敏感信息）
 # config.yaml
+.env
+
+# 断点续传进度文件
+update_progress.txt
 
